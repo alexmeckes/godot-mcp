@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output (keep dist/ as it's needed to run)
+# dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Test output
+test_*/
+*.log
+
+# Generated
+generated-audio/
+test_openai_sprites/
+test_comfyui_output/
+test_poses/

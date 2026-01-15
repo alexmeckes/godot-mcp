@@ -1,0 +1,61 @@
+{
+  "name": "@genai-gametools/godot-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for AI-assisted Godot game development - file editing, live editor control, and procedural generation",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "godot-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "godot",
+    "godot-4",
+    "gamedev",
+    "game-development",
+    "ai",
+    "claude",
+    "procedural-generation",
+    "gdscript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/genai-gametools/godot-mcp"
+  },
+  "homepage": "https://github.com/genai-gametools/godot-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/genai-gametools/godot-mcp/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.13",
+    "@vitest/coverage-v8": "^4.0.16",
+    "typescript": "^5.6.0",
+    "vitest": "^4.0.16"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
