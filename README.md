@@ -44,8 +44,8 @@ npm install -g @genai-gametools/godot-mcp
 
 ### Option 2: From Source
 ```bash
-git clone https://github.com/alexmeckes/genai-gametools.git
-cd genai-gametools/packages/godot-mcp
+git clone https://github.com/alexmeckes/godot-mcp.git
+cd godot-mcp
 npm install
 npm run build
 ```
@@ -62,7 +62,7 @@ Add to your MCP configuration (`~/.claude/mcp_servers.json` or Claude Desktop se
     "godot-mcp": {
       "command": "node",
       "args": [
-        "/path/to/genai-gametools/packages/godot-mcp/dist/index.js",
+        "/path/to/godot-mcp/dist/index.js",
         "--project",
         "/path/to/your/godot/project"
       ]
@@ -211,7 +211,7 @@ The AI Bridge plugin runs a WebSocket server inside the Godot editor that allows
 
 1. **Copy the plugin folder** to your Godot project:
    ```bash
-   cp -r packages/godot-ai-bridge/addons/godot_ai_bridge /path/to/your/project/addons/
+   cp -r addons/godot_ai_bridge /path/to/your/project/addons/
    ```
 
 2. **Enable the plugin** in Godot:
@@ -351,4 +351,4 @@ MIT
 
 ## Contributing
 
-Issues and pull requests welcome at [github.com/alexmeckes/genai-gametools](https://github.com/alexmeckes/genai-gametools)
+Issues and pull requests welcome at [github.com/alexmeckes/godot-mcp](https://github.com/alexmeckes/godot-mcp)
