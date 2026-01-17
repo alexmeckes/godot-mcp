@@ -2,6 +2,8 @@
 
 MCP (Model Context Protocol) server for AI-assisted Godot 4.x game development. Provides **60 tools** across 8 categories for scene manipulation, script generation, shader creation, UI building, procedural generation, and live editor control.
 
+> **Recommended:** For the best experience, pair this MCP with the [Godot Claude Skills](https://github.com/alexmeckes/godot-claude-skills) plugin. The MCP provides **tools** (read/write/edit capabilities) while the skills provide **knowledge** (GDScript best practices, scene design patterns, shader techniques). Together they give Claude deep Godot expertise.
+
 ## Features
 
 ### File-Based Tools (Always Available)

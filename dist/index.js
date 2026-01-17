@@ -201,6 +201,14 @@ async function main() {
             console.error(`Project path does not exist: ${state.projectPath}`);
             process.exit(1);
         }
+        // Check if this looks like a Godot project
+        try {
+            await fs.access(path.join(state.projectPath, "project.godot"));
+        }
+        catch {
+            console.error(`Warning: No project.godot found in ${state.projectPath}`);
+            console.error(`This directory may not be a Godot project. Tools may not work as expected.`);
+        }
     }
     // Start server with stdio transport
     const transport = new StdioServerTransport();
