@@ -260,12 +260,24 @@ func _handle_modify_node(params: Dictionary) -> Dictionary:
 
 func _convert_value(value):
 	if value is Dictionary:
-		if value.get("_type") == "Vector2":
-			return Vector2(value.get("x", 0), value.get("y", 0))
-		elif value.get("_type") == "Vector3":
-			return Vector3(value.get("x", 0), value.get("y", 0), value.get("z", 0))
-		elif value.get("_type") == "Color":
-			return Color(value.get("r", 1), value.get("g", 1), value.get("b", 1), value.get("a", 1))
+		var dict: Dictionary = value
+
+		match str(dict.get("_type", "")):
+			"Vector2":
+				return Vector2(dict.get("x", 0), dict.get("y", 0))
+			"Vector3":
+				return Vector3(dict.get("x", 0), dict.get("y", 0), dict.get("z", 0))
+			"Color":
+				return Color(dict.get("r", 1), dict.get("g", 1), dict.get("b", 1), dict.get("a", 1))
+
+		if dict.has("x") and dict.has("y"):
+			if dict.has("z"):
+				return Vector3(dict.get("x", 0), dict.get("y", 0), dict.get("z", 0))
+			return Vector2(dict.get("x", 0), dict.get("y", 0))
+
+		if dict.has("r") and dict.has("g") and dict.has("b"):
+			return Color(dict.get("r", 1), dict.get("g", 1), dict.get("b", 1), dict.get("a", 1))
+
 	return value
 
 
