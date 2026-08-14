@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { createServer, type Server as HttpServer } from "node:http";
+import { fileURLToPath } from "node:url";
+import { McpServer, createMcpHandler, type McpHttpHandler } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+  localhostHostValidation,
+  localhostOriginValidation,
+  toNodeHandler,
+} from "@modelcontextprotocol/node";
 import { z } from "zod";
-import * as fs from "fs/promises";
-import * as path from "path";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 
-import { TscnParser } from "./parsers/tscn-parser.js";
 import { registerSceneTools } from "./tools/scene-tools.js";
 import { registerScriptTools } from "./tools/script-tools.js";
 import { registerEditorTools } from "./tools/editor-tools.js";
@@ -32,16 +32,12 @@ import {
   usesEditorBridgeTool,
 } from "./utils/tool-metadata.js";
 
-// Tool registry
 interface ToolHandler {
   description: string;
   inputSchema: z.ZodType<unknown>;
   handler: (args: unknown) => Promise<unknown>;
 }
 
-const tools: Map<string, ToolHandler> = new Map();
-
-// Resource registry
 interface ResourceHandler {
   name: string;
   description: string;
@@ -49,12 +45,16 @@ interface ResourceHandler {
   handler: (uri: string) => Promise<string>;
 }
 
-const resources: Map<string, ResourceHandler> = new Map();
-
-// Server state
 interface ServerState {
   projectPath: string | null;
   editorConnected: boolean;
+  editorPort: number;
+}
+
+interface CliOptions {
+  transport: "stdio" | "http";
+  httpPort: number;
+  projectPath: string;
   editorPort: number;
 }
 
@@ -64,25 +64,9 @@ const state: ServerState = {
   editorPort: 6550,
 };
 
-// Export for tools to use
-export { tools, resources, state };
-export type { ToolHandler, ResourceHandler, ServerState };
+const tools: Map<string, ToolHandler> = new Map();
+const resources: Map<string, ResourceHandler> = new Map();
 
-// Create MCP server
-const server = new Server(
-  {
-    name: "godot-mcp",
-    version: "0.1.0",
-  },
-  {
-    capabilities: {
-      tools: {},
-      resources: {},
-    },
-  }
-);
-
-// Register tools from modules
 registerSceneTools(tools, state);
 registerScriptTools(tools, state);
 registerEditorTools(tools, state);
@@ -97,237 +81,77 @@ registerUIComponentTools(tools, state);
 registerUILayoutTools(tools, state);
 registerDocsTools(tools, state);
 
-// Handle tool listing
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const toolList = Array.from(tools.entries()).map(([name, tool]) => ({
-    name,
-    description: formatToolDescription(name, tool.description),
-    inputSchema:
-      tool.inputSchema instanceof z.ZodObject
-        ? zodToJsonSchema(tool.inputSchema)
-        : { type: "object", properties: {} },
-  }));
+export { tools, resources, state };
+export type { ToolHandler, ResourceHandler, ServerState };
 
-  return { tools: toolList };
-});
+/**
+ * Build one protocol server instance. MCP v2 calls this factory once per HTTP
+ * request (or connection for stdio), while the Godot editor bridge remains a
+ * deliberately process-scoped connection shared by all instances.
+ */
+export function createGodotMcpServer(
+  registry: Map<string, ToolHandler> = tools
+): McpServer {
+  const server = new McpServer({ name: "godot-mcp", version: "0.2.0" });
 
-// Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-
-  const tool = tools.get(name);
-  if (!tool) {
-    return {
-      content: [{ type: "text", text: `Unknown tool: ${name}` }],
-      isError: true,
-    };
-  }
-
-  try {
-    const validatedArgs = tool.inputSchema.parse(args);
-    const result = await tool.handler(validatedArgs);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            typeof result === "string" ? result : JSON.stringify(result, null, 2),
-        },
-      ],
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: "text", text: `Error: ${message}` }],
-      isError: true,
-    };
-  }
-});
-
-// Handle resource listing
-server.setRequestHandler(ListResourcesRequestSchema, async () => {
-  const resourceList = Array.from(resources.entries()).map(([uri, resource]) => ({
-    uri,
-    name: resource.name,
-    description: resource.description,
-    mimeType: resource.mimeType,
-  }));
-
-  return { resources: resourceList };
-});
-
-// Handle resource reading
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  const { uri } = request.params;
-
-  const resource = resources.get(uri);
-  if (!resource) {
-    throw new Error(`Unknown resource: ${uri}`);
-  }
-
-  const content = await resource.handler(uri);
-  return {
-    contents: [
+  for (const [name, tool] of registry) {
+    server.registerTool(
+      name,
       {
-        uri,
-        mimeType: resource.mimeType,
-        text: content,
+        description: formatToolDescription(name, tool.description),
+        inputSchema: tool.inputSchema,
       },
-    ],
-  };
-});
+      async (args) => {
+        try {
+          const result = await tool.handler(args);
+          const response = {
+            content: [
+              {
+                type: "text" as const,
+                text: typeof result === "string" ? result : JSON.stringify(result, null, 2),
+              },
+            ],
+          };
 
-// Convert Zod schema to JSON Schema (simplified)
-function zodToJsonSchema(schema: z.ZodObject<z.ZodRawShape>): Record<string, unknown> {
-  const shape = schema.shape;
-  const properties: Record<string, unknown> = {};
-  const required: string[] = [];
+          if (isPlainObject(result)) {
+            return { ...response, structuredContent: result };
+          }
 
-  for (const [key, value] of Object.entries(shape)) {
-    const zodType = value as z.ZodTypeAny;
-    properties[key] = zodTypeToJsonSchema(zodType);
-
-    if (!zodType.isOptional()) {
-      required.push(key);
-    }
+          return response;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ type: "text" as const, text: `Error: ${message}` }],
+            isError: true,
+          };
+        }
+      }
+    );
   }
 
-  return {
-    type: "object",
-    properties,
-    required: required.length > 0 ? required : undefined,
-  };
+  return server;
 }
 
-function zodTypeToJsonSchema(zodType: z.ZodTypeAny): Record<string, unknown> {
-  // Handle default wrappers
-  if (zodType instanceof z.ZodDefault) {
-    const innerSchema = zodTypeToJsonSchema(zodType.removeDefault());
-    return {
-      ...innerSchema,
-      default: zodType._def.defaultValue(),
-    };
-  }
+/** Create the MCP v2 HTTP handler with stateless legacy compatibility. */
+export function createGodotHttpHandler(): McpHttpHandler {
+  return createMcpHandler(() => createGodotMcpServer(), {
+    legacy: "stateless",
+    responseMode: "auto",
+    onerror: (error) => console.error("MCP HTTP error:", error),
+  });
+}
 
-  // Handle effect wrappers (refine/transform)
-  if (zodType instanceof z.ZodEffects) {
-    return zodTypeToJsonSchema(zodType.innerType());
-  }
-
-  // Handle optional types
-  if (zodType instanceof z.ZodOptional) {
-    return zodTypeToJsonSchema(zodType.unwrap());
-  }
-
-  // Handle nullable types
-  if (zodType instanceof z.ZodNullable) {
-    return {
-      anyOf: [zodTypeToJsonSchema(zodType.unwrap()), { type: "null" }],
-      description: zodType.description,
-    };
-  }
-
-  // Handle string
-  if (zodType instanceof z.ZodString) {
-    return { type: "string", description: zodType.description };
-  }
-
-  // Handle number
-  if (zodType instanceof z.ZodNumber) {
-    return { type: "number", description: zodType.description };
-  }
-
-  // Handle boolean
-  if (zodType instanceof z.ZodBoolean) {
-    return { type: "boolean", description: zodType.description };
-  }
-
-  // Handle array
-  if (zodType instanceof z.ZodArray) {
-    return {
-      type: "array",
-      items: zodTypeToJsonSchema(zodType.element),
-      description: zodType.description,
-    };
-  }
-
-  // Handle object
-  if (zodType instanceof z.ZodObject) {
-    return zodToJsonSchema(zodType);
-  }
-
-  // Handle enum
-  if (zodType instanceof z.ZodEnum) {
-    return {
-      type: "string",
-      enum: zodType.options,
-      description: zodType.description,
-    };
-  }
-
-  // Handle literal values
-  if (zodType instanceof z.ZodLiteral) {
-    const value = zodType.value;
-    return {
-      type: typeof value,
-      enum: [value],
-      description: zodType.description,
-    };
-  }
-
-  // Handle unions
-  if (zodType instanceof z.ZodUnion) {
-    return {
-      anyOf: zodType.options.map((option: z.ZodTypeAny) =>
-        zodTypeToJsonSchema(option)
-      ),
-      description: zodType.description,
-    };
-  }
-
-  // Handle tuple
-  if (zodType instanceof z.ZodTuple) {
-    return {
-      type: "array",
-      prefixItems: zodType.items.map((item: z.ZodTypeAny) =>
-        zodTypeToJsonSchema(item)
-      ),
-      minItems: zodType.items.length,
-      maxItems: zodType.items.length,
-      description: zodType.description,
-    };
-  }
-
-  // Handle record (dictionary/map)
-  if (zodType instanceof z.ZodRecord) {
-    return {
-      type: "object",
-      additionalProperties: true,
-      description: zodType.description,
-    };
-  }
-
-  // Handle any/unknown
-  if (zodType instanceof z.ZodAny || zodType instanceof z.ZodUnknown) {
-    return {
-      description: zodType.description,
-    };
-  }
-
-  // Default
-  return { type: "string" };
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function formatToolDescription(name: string, description: string): string {
-  const isReadOnly = !isMutatingToolName(name);
-  const requiresEditorConnection = requiresEditorBridgeConnection(name);
-  const notes: string[] = [];
+  const notes = [
+    `Purpose: ${description}`,
+    `Operation: ${!isMutatingToolName(name) ? "Read-only" : "May modify files or editor state"}`,
+  ];
 
-  notes.push(`Purpose: ${description}`);
-  notes.push(`Operation: ${isReadOnly ? "Read-only" : "May modify files or editor state"}`);
-
-  if (requiresEditorConnection) {
+  if (requiresEditorBridgeConnection(name)) {
     notes.push("Prerequisite: Requires an active Godot AI Bridge connection (`godot_connect`).");
   }
 
@@ -336,52 +160,124 @@ function formatToolDescription(name: string, description: string): string {
   }
 
   notes.push("Behavior: Inputs are schema-validated before execution.");
-
   return notes.join("\n");
 }
 
-// Main entry point
-async function main() {
-  // Parse command line arguments
-  const args = process.argv.slice(2);
+function parseCliOptions(args: string[]): CliOptions {
+  const options: CliOptions = {
+    transport: "stdio",
+    httpPort: 3000,
+    projectPath: process.cwd(),
+    editorPort: 6550,
+  };
+
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--project" && args[i + 1]) {
-      state.projectPath = path.resolve(args[i + 1]);
-      i++;
+      options.projectPath = path.resolve(args[++i]);
     } else if (args[i] === "--port" && args[i + 1]) {
-      state.editorPort = parseInt(args[i + 1], 10);
-      i++;
+      options.editorPort = parsePort(args[++i], "--port");
+    } else if (args[i] === "--transport" && args[i + 1]) {
+      const transport = args[++i];
+      if (transport !== "stdio" && transport !== "http") {
+        throw new Error("--transport must be either 'stdio' or 'http'");
+      }
+      options.transport = transport;
+    } else if (args[i] === "--http-port" && args[i + 1]) {
+      options.httpPort = parsePort(args[++i], "--http-port");
     }
   }
 
-  // Verify project path exists
-  if (state.projectPath) {
-    try {
-      await fs.access(state.projectPath);
-    } catch {
-      console.error(`Project path does not exist: ${state.projectPath}`);
-      process.exit(1);
-    }
-
-    // Check if this looks like a Godot project
-    try {
-      await fs.access(path.join(state.projectPath, "project.godot"));
-    } catch {
-      console.error(`Warning: No project.godot found in ${state.projectPath}`);
-      console.error(`This directory may not be a Godot project. Tools may not work as expected.`);
-    }
-  }
-
-  // Start server with stdio transport
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-
-  console.error(`Godot MCP server running`);
-  console.error(`Project path: ${state.projectPath}`);
-  console.error(`Editor port: ${state.editorPort}`);
+  return options;
 }
 
-main().catch((error) => {
-  console.error("Fatal error:", error);
-  process.exit(1);
-});
+function parsePort(value: string, option: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${option} must be an integer between 1 and 65535`);
+  }
+  return port;
+}
+
+async function validateProject(projectPath: string): Promise<void> {
+  await fs.access(projectPath).catch(() => {
+    throw new Error(`Project path does not exist: ${projectPath}`);
+  });
+
+  try {
+    await fs.access(path.join(projectPath, "project.godot"));
+  } catch {
+    console.error(`Warning: No project.godot found in ${projectPath}`);
+    console.error("This directory may not be a Godot project. Tools may not work as expected.");
+  }
+}
+
+async function startHttpServer(port: number): Promise<{ server: HttpServer; handler: McpHttpHandler }> {
+  const handler = createGodotHttpHandler();
+  const nodeHandler = toNodeHandler(handler);
+  const validateHost = localhostHostValidation();
+  const validateOrigin = localhostOriginValidation();
+
+  const server = createServer(async (request, response) => {
+    if (request.url !== "/mcp") {
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("Not found");
+      return;
+    }
+
+    if (!validateHost(request, response) || !validateOrigin(request, response)) {
+      return;
+    }
+
+    await nodeHandler(request, response);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  return { server, handler };
+}
+
+async function main(): Promise<void> {
+  const options = parseCliOptions(process.argv.slice(2));
+  state.projectPath = options.projectPath;
+  state.editorPort = options.editorPort;
+  await validateProject(options.projectPath);
+
+  console.error("Godot MCP server running");
+  console.error(`Project path: ${state.projectPath}`);
+  console.error(`Editor port: ${state.editorPort}`);
+
+  if (options.transport === "http") {
+    const { server, handler } = await startHttpServer(options.httpPort);
+    console.error(`MCP transport: stateless HTTP at http://127.0.0.1:${options.httpPort}/mcp`);
+
+    const close = async () => {
+      await handler.close();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      );
+    };
+    process.once("SIGINT", () => void close());
+    process.once("SIGTERM", () => void close());
+    return;
+  }
+
+  serveStdio(() => createGodotMcpServer());
+  console.error("MCP transport: stdio (2025 and 2026-07-28 protocol eras)");
+}
+
+const isMainModule = process.argv[1]
+  ? fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+  : false;
+
+if (isMainModule) {
+  main().catch((error) => {
+    console.error("Fatal error:", error);
+    process.exitCode = 1;
+  });
+}

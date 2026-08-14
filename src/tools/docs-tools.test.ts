@@ -1,4 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+import { loadAiBridgePluginFiles } from './docs-tools.js';
 
 // Mock the tool guide structure
 const TOOL_GUIDE = {
@@ -328,5 +332,36 @@ describe('Tool Count Validation', () => {
 
     // We expect at least 10 tools in the test mock
     expect(totalTools).toBeGreaterThanOrEqual(10);
+  });
+});
+
+describe('Canonical AI Bridge packaging', () => {
+  it('loads every shipped bridge file without maintaining an embedded copy', async () => {
+    const pluginFiles = await loadAiBridgePluginFiles();
+    const expectedPaths = [
+      'addons/godot_ai_bridge/plugin.cfg',
+      'addons/godot_ai_bridge/godot_ai_bridge.gd',
+      'addons/godot_ai_bridge/runtime_bridge.gd',
+      'addons/godot_ai_bridge/ws_server.gd',
+      'addons/godot_ai_bridge/message_handler.gd',
+    ];
+
+    expect(Object.keys(pluginFiles).sort()).toEqual(expectedPaths.sort());
+
+    const repositoryRoot = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../..'
+    );
+    for (const pluginPath of expectedPaths) {
+      const canonicalContent = await fs.readFile(
+        path.join(repositoryRoot, pluginPath),
+        'utf-8'
+      );
+      expect(pluginFiles[pluginPath]).toBe(canonicalContent);
+    }
+
+    expect(pluginFiles['addons/godot_ai_bridge/message_handler.gd']).toContain(
+      '"runtime.capture_screenshot"'
+    );
   });
 });

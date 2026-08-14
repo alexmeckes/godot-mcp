@@ -84,6 +84,9 @@ npm install -g @genai-gametools/godot-mcp
 
 Any MCP client that can launch a local process can run this server. The example below uses Claude Code / Claude Desktop.
 
+The server uses the stable MCP TypeScript SDK v2 and supports both the 2026-07-28
+protocol and 2025-era clients. Stdio remains the default transport.
+
 ### Claude Code / Claude Desktop
 
 Add to your MCP configuration (`~/.claude/mcp_servers.json` or Claude Desktop settings):
@@ -109,9 +112,30 @@ Add to your MCP configuration (`~/.claude/mcp_servers.json` or Claude Desktop se
 godot-mcp [options]
 
 Options:
-  --project <path>  Path to Godot project directory (default: current directory)
-  --port <number>   Editor WebSocket port (default: 6550)
+  --project <path>     Path to Godot project directory (default: current directory)
+  --port <number>      Editor WebSocket port (default: 6550)
+  --transport <type>   MCP transport: stdio or http (default: stdio)
+  --http-port <number> Stateless HTTP port (default: 3000)
 ```
+
+### Stateless HTTP
+
+For clients that connect to a URL instead of launching a subprocess:
+
+```bash
+npm run build
+node dist/index.js --transport http --http-port 3000 --project /path/to/project
+```
+
+Connect the client to `http://127.0.0.1:3000/mcp`. The HTTP transport creates a
+fresh MCP server for every request and advertises `ttlMs: 0`; 2025-era HTTP
+requests use the SDK's stateless compatibility mode and do not receive session
+IDs. The endpoint binds only to loopback and validates localhost Host and Origin
+headers to reduce DNS-rebinding exposure.
+
+The Godot AI Bridge WebSocket is intentionally process-scoped. Consequently,
+`godot_connect` persists across otherwise stateless MCP HTTP requests, which is
+necessary for the live editor tools to remain useful.
 
 ---
 
@@ -472,7 +496,7 @@ Once configured, you can ask your AI assistant:
 
 ## Requirements
 
-- **Node.js 18+**
+- **Node.js 20+**
 - **Godot 4.x** (4.2+ recommended for live editor features)
 
 ## License

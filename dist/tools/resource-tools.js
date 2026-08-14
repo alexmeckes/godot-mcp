@@ -39,7 +39,7 @@ export function registerResourceTools(tools, state) {
                 .optional()
                 .describe("Class name of the custom resource"),
             properties: z
-                .record(z.unknown())
+                .record(z.string(), z.unknown())
                 .describe("Resource properties to set"),
         }),
         handler: async (args) => {

@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+.npm-cache/
 
 # Build output (keep dist/ as it's needed to run)
 # dist/
@@ -21,6 +22,7 @@ Thumbs.db
 # Test output
 test_*/
 *.log
+coverage/
 
 # Generated
 generated-audio/

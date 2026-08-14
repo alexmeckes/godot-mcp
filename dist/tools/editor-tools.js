@@ -110,7 +110,7 @@ export function registerEditorTools(tools, state) {
             name: z.string().describe("Name for the new node"),
             type: z.string().describe("Godot node type (e.g., 'Sprite2D', 'Node2D')"),
             properties: z
-                .record(z.unknown())
+                .record(z.string(), z.unknown())
                 .optional()
                 .describe("Initial properties to set"),
         }),
@@ -147,7 +147,7 @@ export function registerEditorTools(tools, state) {
         inputSchema: z.object({
             nodePath: z.string().describe("Path to the node to modify"),
             properties: z
-                .record(z.unknown())
+                .record(z.string(), z.unknown())
                 .describe("Properties to set on the node"),
         }),
         handler: async (args) => {
