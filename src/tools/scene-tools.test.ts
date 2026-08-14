@@ -131,7 +131,7 @@ describe('Scene Path Utilities', () => {
     const relativePath = resPath.replace('res://', '');
     const fullPath = path.join(projectPath, relativePath);
 
-    expect(fullPath).toBe('/home/user/project/scenes/main.tscn');
+    expect(fullPath).toBe(path.join(projectPath, 'scenes', 'main.tscn'));
   });
 
   it('should handle nested paths', () => {
@@ -141,6 +141,6 @@ describe('Scene Path Utilities', () => {
     const relativePath = resPath.replace('res://', '');
     const fullPath = path.join(projectPath, relativePath);
 
-    expect(fullPath).toBe('/project/levels/world1/stage1.tscn');
+    expect(fullPath).toBe(path.join(projectPath, 'levels', 'world1', 'stage1.tscn'));
   });
 });

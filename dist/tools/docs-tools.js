@@ -4,6 +4,7 @@
 import { z } from "zod";
 import * as fs from "fs/promises";
 import * as path from "path";
+import { fileURLToPath } from "url";
 import { isMutatingToolName, usesEditorBridgeTool } from "../utils/tool-metadata.js";
 // Godot 4.x class documentation (commonly used classes)
 const GODOT_DOCS = {
@@ -945,10 +946,6 @@ function unwrapSchema(schema) {
             shouldContinue = true;
             continue;
         }
-        if (current instanceof z.ZodEffects) {
-            current = current.innerType();
-            shouldContinue = true;
-        }
     }
     return { schema: current, required, nullable, defaultValue };
 }
@@ -963,8 +960,9 @@ function schemaTypeLabel(schema) {
         return schema.options.join(" | ");
     if (schema instanceof z.ZodLiteral)
         return JSON.stringify(schema.value);
-    if (schema instanceof z.ZodArray)
+    if (schema instanceof z.ZodArray) {
         return `array<${schemaTypeLabel(schema.element)}>`;
+    }
     if (schema instanceof z.ZodRecord)
         return "record<string, unknown>";
     if (schema instanceof z.ZodObject)
@@ -975,7 +973,7 @@ function schemaTypeLabel(schema) {
             .join(" | ");
     }
     if (schema instanceof z.ZodTuple) {
-        return `tuple<${schema.items
+        return `tuple<${schema.def.items
             .map((item) => schemaTypeLabel(item))
             .join(", ")}>`;
     }
@@ -1443,6 +1441,9 @@ export function registerDocsTools(tools, state) {
         handler: async (args) => {
             const { projectPath, projectName, template, includeAiBridge } = args;
             const fullPath = path.resolve(projectPath);
+            const pluginFiles = includeAiBridge
+                ? await loadAiBridgePluginFiles()
+                : {};
             // Create directory structure
             const dirs = [
                 "",
@@ -1486,7 +1487,6 @@ mono_crash.*.json
             }
             // Copy AI Bridge plugin if requested
             if (includeAiBridge) {
-                const pluginFiles = getAiBridgePluginFiles();
                 for (const [filePath, content] of Object.entries(pluginFiles)) {
                     await fs.writeFile(path.join(fullPath, filePath), content);
                 }
@@ -1501,7 +1501,7 @@ mono_crash.*.json
                     "project.godot",
                     ".gitignore",
                     ...Object.keys(templateFiles),
-                    ...(includeAiBridge ? Object.keys(getAiBridgePluginFiles()) : []),
+                    ...Object.keys(pluginFiles),
                 ],
                 nextSteps: [
                     `Open Godot and import the project from: ${fullPath}`,
@@ -1755,324 +1755,21 @@ text = "Click Me"
     }
     return files;
 }
-function getAiBridgePluginFiles() {
-    return {
-        "addons/godot_ai_bridge/plugin.cfg": `[plugin]
-
-name="Godot AI Bridge"
-description="WebSocket server enabling AI assistants to control the Godot editor"
-author="genai-gametools"
-version="0.1.0"
-script="godot_ai_bridge.gd"
-`,
-        "addons/godot_ai_bridge/godot_ai_bridge.gd": `@tool
-extends EditorPlugin
-## Main plugin for Godot AI Bridge
-## Exposes editor functionality via WebSocket for AI assistants
-
-const WSServer := preload("res://addons/godot_ai_bridge/ws_server.gd")
-const MessageHandler := preload("res://addons/godot_ai_bridge/message_handler.gd")
-
-var _ws_server: WSServer
-var _message_handler: MessageHandler
-var _port: int = 6550
-
-
-func _enter_tree() -> void:
-\t_message_handler = MessageHandler.new()
-\t_message_handler.editor_interface = get_editor_interface()
-\t_message_handler.undo_redo = get_undo_redo()
-
-\t_ws_server = WSServer.new()
-\t_ws_server.port = _port
-\t_ws_server.message_received.connect(_on_message_received)
-\t_ws_server.client_connected.connect(_on_client_connected)
-\t_ws_server.client_disconnected.connect(_on_client_disconnected)
-
-\tadd_child(_ws_server)
-
-\tvar err := _ws_server.start()
-\tif err == OK:
-\t\tprint("[AI Bridge] Server started on port ", _port)
-\telse:
-\t\tpush_error("[AI Bridge] Failed to start server: ", err)
-
-
-func _exit_tree() -> void:
-\tif _ws_server:
-\t\t_ws_server.stop()
-\t\t_ws_server.queue_free()
-\tif _message_handler:
-\t\t_message_handler.free()
-
-
-func _on_message_received(peer_id: int, message: String) -> void:
-\tvar response := _message_handler.handle_message(message)
-\t_ws_server.send_message(peer_id, response)
-
-
-func _on_client_connected(peer_id: int) -> void:
-\tprint("[AI Bridge] Client connected: ", peer_id)
-
-
-func _on_client_disconnected(peer_id: int) -> void:
-\tprint("[AI Bridge] Client disconnected: ", peer_id)
-`,
-        "addons/godot_ai_bridge/ws_server.gd": `@tool
-extends Node
-class_name AIBridgeWSServer
-## WebSocket server for AI Bridge
-
-signal message_received(peer_id: int, message: String)
-signal client_connected(peer_id: int)
-signal client_disconnected(peer_id: int)
-
-var port: int = 6550
-var _tcp_server: TCPServer
-var _peers: Dictionary = {}
-
-
-func _ready() -> void:
-\tset_process(false)
-
-
-func start() -> Error:
-\t_tcp_server = TCPServer.new()
-\tvar err := _tcp_server.listen(port, "127.0.0.1")
-\tif err != OK:
-\t\treturn err
-\tset_process(true)
-\treturn OK
-
-
-func stop() -> void:
-\tset_process(false)
-\tfor peer_id in _peers.keys():
-\t\tvar peer: WebSocketPeer = _peers[peer_id]
-\t\tpeer.close()
-\t_peers.clear()
-\tif _tcp_server:
-\t\t_tcp_server.stop()
-\t\t_tcp_server = null
-
-
-func _process(_delta: float) -> void:
-\twhile _tcp_server and _tcp_server.is_connection_available():
-\t\tvar connection := _tcp_server.take_connection()
-\t\tif connection:
-\t\t\t_accept_connection(connection)
-
-\tvar to_remove: Array[int] = []
-\tfor peer_id in _peers.keys():
-\t\tvar peer: WebSocketPeer = _peers[peer_id]
-\t\tpeer.poll()
-\t\tvar state := peer.get_ready_state()
-\t\tmatch state:
-\t\t\tWebSocketPeer.STATE_OPEN:
-\t\t\t\twhile peer.get_available_packet_count() > 0:
-\t\t\t\t\tvar packet := peer.get_packet()
-\t\t\t\t\tvar message := packet.get_string_from_utf8()
-\t\t\t\t\tmessage_received.emit(peer_id, message)
-\t\t\tWebSocketPeer.STATE_CLOSING:
-\t\t\t\tpass
-\t\t\tWebSocketPeer.STATE_CLOSED:
-\t\t\t\tto_remove.append(peer_id)
-\t\t\t\tclient_disconnected.emit(peer_id)
-
-\tfor peer_id in to_remove:
-\t\t_peers.erase(peer_id)
-
-
-func _accept_connection(connection: StreamPeerTCP) -> void:
-\tvar peer := WebSocketPeer.new()
-\tvar err := peer.accept_stream(connection)
-\tif err != OK:
-\t\tpush_error("[AI Bridge] Failed to accept WebSocket connection: ", err)
-\t\treturn
-\tvar peer_id := connection.get_instance_id()
-\t_peers[peer_id] = peer
-\tawait get_tree().create_timer(0.1).timeout
-\tif peer.get_ready_state() == WebSocketPeer.STATE_OPEN:
-\t\tclient_connected.emit(peer_id)
-
-
-func send_message(peer_id: int, message: String) -> Error:
-\tif not _peers.has(peer_id):
-\t\treturn ERR_DOES_NOT_EXIST
-\tvar peer: WebSocketPeer = _peers[peer_id]
-\tif peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
-\t\treturn ERR_CONNECTION_ERROR
-\treturn peer.send_text(message)
-
-
-func broadcast(message: String) -> void:
-\tfor peer_id in _peers.keys():
-\t\tsend_message(peer_id, message)
-`,
-        "addons/godot_ai_bridge/message_handler.gd": `@tool
-extends RefCounted
-class_name AIBridgeMessageHandler
-## Handles JSON-RPC messages for AI Bridge
-
-var editor_interface: EditorInterface
-var undo_redo: EditorUndoRedoManager
-
-
-func handle_message(message: String) -> String:
-\tvar json := JSON.new()
-\tvar err := json.parse(message)
-\tif err != OK:
-\t\treturn _error_response(null, -32700, "Parse error")
-
-\tvar data: Variant = json.data
-\tif not data is Dictionary:
-\t\treturn _error_response(null, -32600, "Invalid Request")
-
-\tvar request: Dictionary = data
-\tvar id: Variant = request.get("id")
-\tvar method: Variant = request.get("method")
-\tvar params: Variant = request.get("params", {})
-
-\tif not method is String:
-\t\treturn _error_response(id, -32600, "Invalid Request: method must be string")
-
-\tvar result := _dispatch(method, params if params is Dictionary else {})
-\tif result.has("error"):
-\t\treturn _error_response(id, result.error.code, result.error.message)
-\treturn _success_response(id, result.get("result"))
-
-
-func _dispatch(method: String, params: Dictionary) -> Dictionary:
-\tmatch method:
-\t\t"initialize":
-\t\t\treturn {"result": {"server": "godot-ai-bridge", "godot_version": Engine.get_version_info().string}}
-\t\t"scene_tree.get":
-\t\t\treturn _handle_get_scene_tree(params)
-\t\t"scene_tree.add_node":
-\t\t\treturn _handle_add_node(params)
-\t\t"scene_tree.remove_node":
-\t\t\treturn _handle_remove_node(params)
-\t\t"scene_tree.modify_node":
-\t\t\treturn _handle_modify_node(params)
-\t\t"editor.run_scene":
-\t\t\treturn _handle_run_scene(params)
-\t\t"editor.stop_scene":
-\t\t\treturn _handle_stop_scene(params)
-\t\t_:
-\t\t\treturn {"error": {"code": -32601, "message": "Method not found: " + method}}
-
-
-func _handle_get_scene_tree(_params: Dictionary) -> Dictionary:
-\tvar edited_scene := editor_interface.get_edited_scene_root()
-\tif not edited_scene:
-\t\treturn {"result": {"nodes": []}}
-\tvar nodes := _serialize_tree(edited_scene, "")
-\treturn {"result": {"root": edited_scene.name, "nodes": nodes}}
-
-
-func _serialize_tree(node: Node, parent_path: String) -> Array:
-\tvar nodes: Array = []
-\tvar node_path := parent_path + "/" + node.name if parent_path else node.name
-\tnodes.append({"name": node.name, "type": node.get_class(), "path": node_path})
-\tfor child in node.get_children():
-\t\tnodes.append_array(_serialize_tree(child, node_path))
-\treturn nodes
-
-
-func _handle_add_node(params: Dictionary) -> Dictionary:
-\tvar parent_path: String = params.get("parent", ".")
-\tvar node_name: String = params.get("name", "NewNode")
-\tvar node_type: String = params.get("type", "Node")
-
-\tvar edited_scene := editor_interface.get_edited_scene_root()
-\tif not edited_scene:
-\t\treturn {"error": {"code": -32603, "message": "No scene open"}}
-
-\tvar parent := edited_scene if parent_path == "." else edited_scene.get_node_or_null(parent_path)
-\tif not parent:
-\t\treturn {"error": {"code": -32603, "message": "Parent not found"}}
-
-\tvar new_node: Node = ClassDB.instantiate(node_type)
-\tif not new_node:
-\t\treturn {"error": {"code": -32603, "message": "Failed to create node"}}
-
-\tnew_node.name = node_name
-\tundo_redo.create_action("Add Node")
-\tundo_redo.add_do_method(parent, "add_child", new_node)
-\tundo_redo.add_do_property(new_node, "owner", edited_scene)
-\tundo_redo.add_do_reference(new_node)
-\tundo_redo.add_undo_method(parent, "remove_child", new_node)
-\tundo_redo.commit_action()
-
-\treturn {"result": {"added": node_name, "path": str(new_node.get_path())}}
-
-
-func _handle_remove_node(params: Dictionary) -> Dictionary:
-\tvar path: String = params.get("path", "")
-\tvar edited_scene := editor_interface.get_edited_scene_root()
-\tif not edited_scene:
-\t\treturn {"error": {"code": -32603, "message": "No scene open"}}
-
-\tvar node := edited_scene.get_node_or_null(path)
-\tif not node or node == edited_scene:
-\t\treturn {"error": {"code": -32603, "message": "Node not found or is root"}}
-
-\tvar parent := node.get_parent()
-\tundo_redo.create_action("Remove Node")
-\tundo_redo.add_do_method(parent, "remove_child", node)
-\tundo_redo.add_undo_method(parent, "add_child", node)
-\tundo_redo.add_undo_property(node, "owner", edited_scene)
-\tundo_redo.add_undo_reference(node)
-\tundo_redo.commit_action()
-
-\treturn {"result": {"removed": path}}
-
-
-func _handle_modify_node(params: Dictionary) -> Dictionary:
-\tvar path: String = params.get("path", "")
-\tvar properties: Dictionary = params.get("properties", {})
-
-\tvar edited_scene := editor_interface.get_edited_scene_root()
-\tif not edited_scene:
-\t\treturn {"error": {"code": -32603, "message": "No scene open"}}
-
-\tvar node := edited_scene.get_node_or_null(path)
-\tif not node:
-\t\treturn {"error": {"code": -32603, "message": "Node not found"}}
-
-\tvar modified: Array = []
-\tundo_redo.create_action("Modify Node")
-\tfor prop_name in properties:
-\t\tif prop_name in node:
-\t\t\tvar old_value = node.get(prop_name)
-\t\t\tvar new_value = properties[prop_name]
-\t\t\tif new_value is Dictionary and new_value.get("_type") == "Vector2":
-\t\t\t\tnew_value = Vector2(new_value.x, new_value.y)
-\t\t\tundo_redo.add_do_property(node, prop_name, new_value)
-\t\t\tundo_redo.add_undo_property(node, prop_name, old_value)
-\t\t\tmodified.append(prop_name)
-\tundo_redo.commit_action()
-
-\treturn {"result": {"modified": modified}}
-
-
-func _handle_run_scene(_params: Dictionary) -> Dictionary:
-\teditor_interface.play_current_scene()
-\treturn {"result": {"running": true}}
-
-
-func _handle_stop_scene(_params: Dictionary) -> Dictionary:
-\teditor_interface.stop_playing_scene()
-\treturn {"result": {"stopped": true}}
-
-
-func _success_response(id: Variant, result: Variant) -> String:
-\treturn JSON.stringify({"jsonrpc": "2.0", "id": id, "result": result})
-
-
-func _error_response(id: Variant, code: int, message: String) -> String:
-\treturn JSON.stringify({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
-`,
-    };
+const AI_BRIDGE_FILENAMES = [
+    "plugin.cfg",
+    "godot_ai_bridge.gd",
+    "runtime_bridge.gd",
+    "ws_server.gd",
+    "message_handler.gd",
+];
+/** Load the canonical bridge shipped beside dist/ in source and npm installs. */
+export async function loadAiBridgePluginFiles() {
+    const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+    const bridgeDirectory = path.resolve(moduleDirectory, "../../addons/godot_ai_bridge");
+    const entries = await Promise.all(AI_BRIDGE_FILENAMES.map(async (filename) => {
+        const content = await fs.readFile(path.join(bridgeDirectory, filename), "utf-8");
+        return [`addons/godot_ai_bridge/${filename}`, content];
+    }));
+    return Object.fromEntries(entries);
 }
 //# sourceMappingURL=docs-tools.js.map

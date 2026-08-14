@@ -56,7 +56,7 @@ export function registerSceneTools(tools, state) {
                     .array(z.object({
                     type: z.string(),
                     id: z.string(),
-                    properties: z.record(z.unknown()).optional(),
+                    properties: z.record(z.string(), z.unknown()).optional(),
                 }))
                     .optional(),
                 nodes: z.array(z.object({
@@ -65,7 +65,7 @@ export function registerSceneTools(tools, state) {
                     parent: z.string().optional(),
                     instance: z.string().optional(),
                     groups: z.array(z.string()).optional(),
-                    properties: z.record(z.unknown()).optional(),
+                    properties: z.record(z.string(), z.unknown()).optional(),
                 })),
                 connections: z
                     .array(z.object({
@@ -128,7 +128,7 @@ export function registerSceneTools(tools, state) {
                     .describe("Parent node path (use '.' for root's children, omit for root node)"),
                 groups: z.array(z.string()).optional().describe("Groups to add the node to"),
                 properties: z
-                    .record(z.unknown())
+                    .record(z.string(), z.unknown())
                     .optional()
                     .describe("Node properties to set"),
             }),
@@ -193,7 +193,7 @@ export function registerSceneTools(tools, state) {
                 name: z.string().optional().describe("New name for the node"),
                 groups: z.array(z.string()).optional().describe("New groups for the node"),
                 properties: z
-                    .record(z.unknown())
+                    .record(z.string(), z.unknown())
                     .optional()
                     .describe("Properties to set or update"),
             }),

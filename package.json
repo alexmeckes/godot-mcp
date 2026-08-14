@@ -1,20 +1,27 @@
 {
   "name": "@genai-gametools/godot-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server for AI-assisted Godot game development - file editing, live editor control, and procedural generation",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "godot-mcp": "./dist/index.js"
+    "godot-mcp": "dist/index.js"
   },
   "files": [
     "dist",
-    "README.md"
+    "addons",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
+    "start:http": "node dist/index.js --transport http",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -33,29 +40,31 @@
     "procedural-generation",
     "gdscript"
   ],
-  "author": "",
+  "author": "Alex Meckes",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/genai-gametools/godot-mcp"
+    "url": "git+https://github.com/alexmeckes/godot-mcp.git"
   },
-  "homepage": "https://github.com/genai-gametools/godot-mcp#readme",
+  "homepage": "https://github.com/alexmeckes/godot-mcp#readme",
   "bugs": {
-    "url": "https://github.com/genai-gametools/godot-mcp/issues"
+    "url": "https://github.com/alexmeckes/godot-mcp/issues"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "ws": "^8.18.0",
-    "zod": "^3.23.8"
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "ws": "^8.21.3",
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.13",
-    "@vitest/coverage-v8": "^4.0.16",
+    "@vitest/coverage-v8": "4.1.10",
     "typescript": "^5.6.0",
-    "vitest": "^4.0.16"
+    "vite": "6.4.3",
+    "vitest": "4.1.10"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }
